@@ -1,0 +1,12 @@
+id = "herdr-tps"
+name = "Herdr TPS"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "Globale Tokens/s über alle OMP-Sessions, rollierendes Fenster."
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "tps"
+title = "TPS"
+placement = "split"
+command = ["node", "tps.js"]
