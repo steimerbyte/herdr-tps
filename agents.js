@@ -32,38 +32,28 @@ function reporterEntries(reports, nowMs, staleMs = STALE_MS) {
   return entries;
 }
 
-// An agent is active when it produced output inside the window or its agent_start is
-// still open. Distinct paths only: a burst and an open run of the same session is one.
-function countAgents(openPaths, outputEntries, nowMs, windowMs) {
-  const from = nowMs - windowMs;
-  const active = new Set();
-  if (Array.isArray(openPaths)) {
-    for (const file of openPaths) {
-      if (typeof file === 'string' && file !== '') active.add(file);
-    }
+// Fresh reporter files ({ts, rate}) contribute their reading; a stale file is a
+// session that ended without cleanup. Non-finite rates count as 0.
+function sumRates(reports, nowMs, staleMs = STALE_MS) {
+  const from = nowMs - staleMs;
+  let sum = 0;
+  for (const report of Array.isArray(reports) ? reports : []) {
+    if (!Number.isFinite(report?.ts) || report.ts < from) continue;
+    if (Number.isFinite(report.rate)) sum += report.rate;
   }
-  if (Array.isArray(outputEntries)) {
-    for (const entry of outputEntries) {
-      const file = entry?.path;
-      const ts = entry?.ts;
-      if (typeof file !== 'string' || file === '') continue;
-      if (!Number.isFinite(ts) || ts < from) continue;
-      active.add(file);
-    }
-  }
-  return active.size;
+  return sum;
 }
 
 function whole(value) {
   return Math.round(Number.isFinite(value) ? value : 0);
 }
 
-// Rates are already per second. The count is always shown, so 0 is visible too.
-function formatStatus(outputPerSec, reasoningPerSec, agents) {
-  const reasoning = whole(reasoningPerSec);
+// The rate is already per second; one decimal matches OMP's native badge. The count
+// is always shown, so 0 is visible too.
+function formatStatus(outputPerSec, agents) {
+  const rate = Number.isFinite(outputPerSec) && outputPerSec > 0 ? outputPerSec : 0;
   const active = Math.max(whole(agents), 0);
-  const reasoningPart = reasoning > 0 ? ` (${reasoning} rsn/s)` : '';
-  return `${whole(outputPerSec)} tok/s${reasoningPart} · ${active} ${active === 1 ? 'Agent' : 'Agenten'}`;
+  return `${rate.toFixed(1)} tok/s · ${active} ${active === 1 ? 'Agent' : 'Agenten'}`;
 }
 
 function readLock(lockFile) {
@@ -135,8 +125,8 @@ module.exports = {
   STALE_MS,
   countActive,
   reporterEntries,
-  countAgents,
   formatStatus,
+  sumRates,
   claimLock,
   ownsLock,
   releaseLock,

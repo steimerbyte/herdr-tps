@@ -3,9 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { countActive, countAgents, reporterEntries, formatStatus } = require('../agents.js');
-const { createTailer } = require('../tail.js');
-const { createWindow } = require('../window.js');
+const { countActive, reporterEntries, formatStatus, sumRates } = require('../agents.js');
 
 const NOW = 1_795_000_000_000;
 
@@ -65,7 +63,7 @@ test('two reporter files of the same pane with one path each count two agents', 
     'wA_p1__Sub-A.json': { pane: 'wA:p1', pid: 1, session: 'Sub-A', ts: NOW, active: ['/s/Sub-A.jsonl'] },
   });
   assert.equal(countActive(reporterEntries(parsed, NOW), NOW), 2);
-  assert.equal(formatStatus(412, 199, 2), '412 tok/s (199 rsn/s) · 2 Agenten');
+  assert.equal(sumRates(parsed, NOW), 0); // no rate reported: no contribution
 });
 
 test('the same session in two reporter files counts once', (t) => {
@@ -91,75 +89,17 @@ test('reporterEntries keeps the 10 s boundary and skips unreadable entries', () 
   assert.equal(countActive(reporterEntries([{ active: ['/s/a.jsonl'] }], NOW), NOW), 0);
 });
 
-test('formatStatus renders reasoning and the agent count', () => {
-  assert.equal(formatStatus(412, 199, 3), '412 tok/s (199 rsn/s) · 3 Agenten');
-  assert.equal(formatStatus(412, 0, 3), '412 tok/s · 3 Agenten');
-  assert.equal(formatStatus(88, 0, 1), '88 tok/s · 1 Agent');
-  assert.equal(formatStatus(0, 0, 0), '0 tok/s · 0 Agenten');
+test('formatStatus renders the rate with one decimal and the agent count', () => {
+  assert.equal(formatStatus(412, 3), '412.0 tok/s · 3 Agenten');
+  assert.equal(formatStatus(88.46, 1), '88.5 tok/s · 1 Agent');
+  assert.equal(formatStatus(0, 0), '0.0 tok/s · 0 Agenten');
+  assert.equal(formatStatus(Number.NaN, Number.NaN), '0.0 tok/s · 0 Agenten');
 });
 
-test('formatStatus rounds and survives missing numbers', () => {
-  assert.equal(formatStatus(411.6, 199.4, 2), '412 tok/s (199 rsn/s) · 2 Agenten');
-  assert.equal(formatStatus(Number.NaN, Number.NaN, Number.NaN), '0 tok/s · 0 Agenten');
-});
-
-test('countAgents counts a burst inside the window without an open agent', () => {
-  const record = { path: '/s/a.jsonl', ts: NOW - 1000 };
-  assert.equal(countAgents([], [record], NOW, 8000), 1);
-  assert.equal(countAgents([], [record], NOW + 8100, 8000), 0); // 8.1 s after the record
-  assert.equal(countAgents([], [{ path: '/s/a.jsonl', ts: NOW }], NOW + 8000, 8000), 1); // boundary
-});
-
-test('countAgents unions open runs with output paths and dedupes by path', () => {
-  const record = { path: '/s/a.jsonl', ts: NOW - 1000 };
-  assert.equal(countAgents(['/s/open.jsonl'], [], NOW, 8000), 1); // open agent, no output
-  assert.equal(countAgents(['/s/a.jsonl'], [record], NOW, 8000), 1); // same path in both sets
-  assert.equal(countAgents(['/s/open.jsonl'], [record], NOW, 8000), 2);
-});
-
-test('countAgents ignores broken inputs', () => {
-  assert.equal(countAgents(null, null, NOW, 8000), 0);
-  assert.equal(countAgents(undefined, undefined, NOW, 8000), 0);
-  const open = [42, '', null, '/s/a.jsonl'];
-  const output = [{ path: 7, ts: NOW }, { path: '/s/b.jsonl', ts: 'now' }, null, undefined];
-  assert.equal(countAgents(open, output, NOW, 8000), 1);
-});
-
-test('integration: a positive window rate always implies at least one agent', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-burst-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const now = Date.now();
-  const file = path.join(root, 'slug', 'session.jsonl');
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(
-    file,
-    JSON.stringify({
-      type: 'message',
-      id: 'burst-1',
-      timestamp: new Date(now - 1000).toISOString(),
-      message: { role: 'assistant', usage: { input: 0, output: 800, cacheRead: 0, cacheWrite: 0 } },
-    }) + '\n',
-  );
-
-  const win = createWindow(8000);
-  const recent = new Map();
-  const tailer = createTailer({
-    root,
-    windowMs: 8000,
-    onRecord: ({ output, tsMs, file: sessionFile }) => {
-      win.add(output, tsMs);
-      recent.set(sessionFile, tsMs);
-    },
-  });
-  assert.equal(tailer.poll(now), true);
-
-  const outputs = [...recent].map(([sessionFile, ts]) => ({ path: sessionFile, ts }));
-  const rate = win.total(now) / 8;
-  const agents = countAgents([], outputs, now, 8000);
-  assert.ok(rate > 0, `rate ${rate}`);
-  assert.ok(agents >= 1, `agents ${agents}`);
-
-  const later = now + 8100;
-  assert.equal(win.total(later), 0);
-  assert.equal(countAgents([], outputs, later, 8000), 0);
+test('sumRates adds fresh readings only', () => {
+  assert.equal(sumRates([{ ts: NOW, rate: 10 }, { ts: NOW - 1000, rate: 2.5 }], NOW), 12.5);
+  assert.equal(sumRates([{ ts: NOW - 10_000, rate: 9 }], NOW), 9);
+  assert.equal(sumRates([{ ts: NOW - 10_001, rate: 100 }], NOW), 0);
+  assert.equal(sumRates([{ ts: NOW, rate: Number.NaN }, { rate: 4 }], NOW), 0);
+  assert.equal(sumRates(null, NOW), 0);
 });

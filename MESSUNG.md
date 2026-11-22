@@ -1,3 +1,8 @@
+> **Ab 2026-11-22:** Die Statuszeile rechnet mit einer Portierung von OMPs
+> `TokenRateMeter` (kernel-gewichtet, `meter.js`) und zeigt dieselbe Zahl wie das
+> native Badge. Die Messungen unten beschreiben den Pane-Modus (`tps.js`,
+> rollierendes 8-s-Fenster über JSONL-Records) und bleiben dafür gültig.
+
 # Messung — herdr-tps
 
 Datum: 2026-11-21, Herdr 0.9.5, OMP-Sessions unter `~/.omp/agent/sessions`
